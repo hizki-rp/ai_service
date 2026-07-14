@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI):
         "text-generation",
         model=MODEL_NAME,
         device="cpu",
+        dtype="bfloat16",   # halves weight memory: ~270MB instead of ~540MB
     )
     print(f"[startup] Ready in {time.time() - t0:.1f}s", flush=True)
     yield
