@@ -19,8 +19,10 @@ services:
       --timeout-keep-alive 75
 
     envVars:
-      - key: MODEL_NAME
-        value: HuggingFaceTB/SmolLM2-135M-Instruct
+      - key: GGUF_REPO
+        value: bartowski/SmolLM2-135M-Instruct-GGUF
+      - key: GGUF_FILE
+        value: SmolLM2-135M-Instruct-Q4_K_M.gguf
       - key: ALLOWED_ORIGINS
         value: https://rezumae.pro
 

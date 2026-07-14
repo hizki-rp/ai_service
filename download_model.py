@@ -1,18 +1,14 @@
 """
-Pre-downloads SmolLM2-135M-Instruct into HuggingFace cache.
+Downloads SmolLM2-135M-Instruct Q4_K_M GGUF into the working directory.
 Run during Render build: python download_model.py
-Locally: not needed — first uvicorn startup will download it automatically.
 """
 import os, time
+from huggingface_hub import hf_hub_download
 
-MODEL_NAME = os.environ.get("MODEL_NAME", "HuggingFaceTB/SmolLM2-135M-Instruct")
+REPO_ID  = os.environ.get("GGUF_REPO", "bartowski/SmolLM2-135M-Instruct-GGUF")
+FILENAME = os.environ.get("GGUF_FILE", "SmolLM2-135M-Instruct-Q4_K_M.gguf")
 
-print(f"Pre-downloading {MODEL_NAME} …")
+print(f"Downloading {FILENAME} from {REPO_ID} …")
 t0 = time.time()
-
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-AutoTokenizer.from_pretrained(MODEL_NAME)
-AutoModelForCausalLM.from_pretrained(MODEL_NAME)
-
-print(f"Done in {time.time() - t0:.1f}s — model is cached.")
+path = hf_hub_download(repo_id=REPO_ID, filename=FILENAME, local_dir=".")
+print(f"Done in {time.time()-t0:.1f}s — saved to {path}")

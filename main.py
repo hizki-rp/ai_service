@@ -1,6 +1,6 @@
 """
-Rezumae AI Service — SmolLM2-135M-Instruct (HuggingFace transformers, CPU)
-No GGUF needed. Model downloads automatically on first start (~270 MB).
+Rezumae AI Service — SmolLM2-135M-Instruct Q4_K_M (llama-cpp-python, CPU)
+~90 MB loaded. No PyTorch. Fits in 512 MB free tier.
 """
 
 import json
@@ -11,25 +11,27 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from llama_cpp import Llama
 from pydantic import BaseModel
-from transformers import pipeline as hf_pipeline
 
-MODEL_NAME      = os.environ.get("MODEL_NAME", "HuggingFaceTB/SmolLM2-135M-Instruct")
+GGUF_FILE       = os.environ.get("GGUF_FILE", "SmolLM2-135M-Instruct-Q4_K_M.gguf")
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "https://rezumae.pro,http://localhost:5173").split(",")
 
-pipe = None   # loaded once at startup
+llm = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global pipe
-    print(f"[startup] Loading {MODEL_NAME} on CPU …", flush=True)
+    global llm
+    print(f"[startup] Loading {GGUF_FILE} …", flush=True)
     t0 = time.time()
-    pipe = hf_pipeline(
-        "text-generation",
-        model=MODEL_NAME,
-        device="cpu",
-        dtype="bfloat16",   # halves weight memory: ~270MB instead of ~540MB
+    llm = Llama(
+        model_path=GGUF_FILE,
+        n_ctx=2048,
+        n_threads=2,
+        n_gpu_layers=0,   # CPU only
+        chat_format="chatml",
+        verbose=False,
     )
     print(f"[startup] Ready in {time.time() - t0:.1f}s", flush=True)
     yield
@@ -62,11 +64,10 @@ def extract_json(text: str):
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
         return json.loads(m.group())
-    # Truncated output — try to close open braces/arrays
     m2 = re.search(r"\{", text)
     if m2:
         fragment = text[m2.start():]
-        opens = fragment.count("{") - fragment.count("}")
+        opens     = fragment.count("{") - fragment.count("}")
         arr_opens = fragment.count("[") - fragment.count("]")
         fragment += "]" * max(arr_opens, 0) + "}" * max(opens, 0)
         try:
@@ -76,31 +77,28 @@ def extract_json(text: str):
     raise ValueError("No JSON found in model output")
 
 
-def run_chat(messages: list, max_new_tokens: int, temperature: float) -> str:
-    """Run the pipeline and return the assistant's reply text."""
-    out = pipe(
-        messages,
-        max_new_tokens=max_new_tokens,
-        do_sample=True,
+def run_chat(messages: list, max_tokens: int, temperature: float) -> str:
+    response = llm.create_chat_completion(
+        messages=messages,
+        max_tokens=max_tokens,
         temperature=max(temperature, 0.01),
-        return_full_text=False,
     )
-    return out[0]["generated_text"].strip()
+    return response["choices"][0]["message"]["content"].strip()
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_NAME}
+    return {"status": "ok", "model": GGUF_FILE}
 
 
 @app.post("/parse-cv")
 def parse_cv(req: ParseCvRequest):
-    if pipe is None:
+    if llm is None:
         raise HTTPException(503, "Model not loaded")
 
-    text = req.text.strip()[:3000]   # trim so we stay inside context
+    text = req.text.strip()[:3000]
     if not text:
         raise HTTPException(400, "Empty CV text")
 
@@ -119,7 +117,7 @@ def parse_cv(req: ParseCvRequest):
     ]
 
     t0 = time.time()
-    raw = run_chat(messages, max_new_tokens=600, temperature=0.05)
+    raw = run_chat(messages, max_tokens=600, temperature=0.05)
     elapsed = round(time.time() - t0, 2)
 
     try:
@@ -131,12 +129,11 @@ def parse_cv(req: ParseCvRequest):
 
 @app.post("/ai-complete")
 def ai_complete(req: AiCompleteRequest):
-    """OpenAI-compatible completion endpoint — used as last-resort fallback."""
-    if pipe is None:
+    if llm is None:
         raise HTTPException(503, "Model not loaded")
 
     t0 = time.time()
-    content = run_chat(req.messages, max_new_tokens=min(req.max_tokens, 512), temperature=req.temperature)
+    content = run_chat(req.messages, max_tokens=min(req.max_tokens, 512), temperature=req.temperature)
     elapsed = round(time.time() - t0, 2)
 
     return {
